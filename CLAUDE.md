@@ -69,7 +69,19 @@ Create a file named `<YYYY-MM-DD>-<YYYY-MM-DD>.md` in the project root (e.g. `20
 
 ## Preventable Escalation Criteria
 
-A card is **potentially preventable** if someone who is **not** on the TEE team and **not** the Reporter provided a suggestion, solution, fix, or PR in the comments.
+A card is **preventable** only if **all three** are true:
+
+1. **External contribution** — someone who is **not** on the TEE team and **not** the Reporter provided a suggestion, solution, fix, or pointer in the comments that became the key to resolution.
+2. **Internally discoverable** — the resolution involved information the TEE could plausibly have found themselves. Any one of:
+   - already documented in Confluence, internal runbooks, or product docs;
+   - a prior Jira card already covered the same root cause / behavior;
+   - a lapse in judgment by the TEE (standard escalation step skipped, wrong team consulted, ignored signal);
+   - something the TEE may have forgotten or overlooked (a config option, a known limitation, a recent release-note default change).
+3. **Not a PR fix** — see hard override below.
+
+If **any** of these is false, the card is **not** preventable. In particular, an external comment that surfaced *specialized* knowledge not documented anywhere internally (third-party vendor quirks, customer-only environment context, deep OS internals only that person knew) does **not** make a card preventable — the TEE had no reasonable way to find it.
+
+When marking a card preventable, the reasoning should name the specific internal resource (Confluence page, prior CONS card, runbook) or process step that would have caught it. If no such resource can be named, it's probably not preventable.
 
 **Hard override:** if the Solution Category is **"PR fix"**, the card is **never** preventable — a code change was required, so the escalation could not have been avoided by team-side action in advance. The engineering work itself was the resolution.
 

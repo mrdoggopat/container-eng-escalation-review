@@ -1,25 +1,22 @@
 import { useEffect, useRef, useState } from "react";
 import { StepProgress } from "../../components/StepProgress/StepProgress";
+import {
+  ActivityLog,
+  type ActivityLogEntry,
+  type ActivityTone,
+} from "../../components/ActivityLog/ActivityLog";
 import { fmtDate, type Timeframe } from "../../lib/timeframe";
 import type { ProgressUpdate } from "../../lib/reportGenerator";
 import "./GeneratingView.css";
 
-type ActivityEntry = {
-  id: number;
-  ts: number;
-  phase: ProgressUpdate["phase"];
-  message: string;
-  detail?: string;
-};
-
 type CardChip = NonNullable<ProgressUpdate["cardResult"]>;
 
-const PHASE_DOT_CLASS: Record<ProgressUpdate["phase"], string> = {
-  "querying-escalated": "phase-dot-jira",
-  "querying-total": "phase-dot-jira",
-  "fetching-changelogs": "phase-dot-jira",
-  analyzing: "phase-dot-claude",
-  assembling: "phase-dot-final",
+const PHASE_TONE: Record<ProgressUpdate["phase"], ActivityTone> = {
+  "querying-escalated": "jira",
+  "querying-total": "jira",
+  "fetching-changelogs": "jira",
+  analyzing: "claude",
+  assembling: "final",
 };
 
 const PHASE_LABELS: Record<ProgressUpdate["phase"], string> = {
@@ -67,7 +64,7 @@ export function GeneratingView({
 
   // Accumulate every progress update into a scrolling activity log so the user
   // sees the trail of what Claude / Jira did rather than just the latest line.
-  const [activity, setActivity] = useState<ActivityEntry[]>([]);
+  const [activity, setActivity] = useState<ActivityLogEntry[]>([]);
   const [chips, setChips] = useState<CardChip[]>([]);
   const nextIdRef = useRef(0);
   const startedAtRef = useRef<number>(Date.now());
@@ -84,21 +81,20 @@ export function GeneratingView({
     if (!progress) return;
     setActivity((prev) => {
       const last = prev[prev.length - 1];
-      // Suppress consecutive duplicates (same phase + message + detail).
+      // Suppress consecutive duplicates (same message + detail).
       if (
         last &&
-        last.phase === progress.phase &&
         last.message === progress.message &&
         last.detail === progress.detail
       ) {
         return prev;
       }
-      const next: ActivityEntry = {
+      const next: ActivityLogEntry = {
         id: nextIdRef.current++,
         ts: Date.now(),
-        phase: progress.phase,
         message: progress.message,
         detail: progress.detail,
+        tone: PHASE_TONE[progress.phase],
       };
       // Cap the log so very large runs don't unbounded grow the DOM.
       const trimmed = prev.length >= 200 ? prev.slice(prev.length - 199) : prev;
@@ -111,14 +107,6 @@ export function GeneratingView({
       );
     }
   }, [progress]);
-
-  // Auto-scroll the activity log to the bottom as new entries arrive.
-  const logRef = useRef<HTMLOListElement | null>(null);
-  useEffect(() => {
-    const el = logRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [activity.length]);
 
   return (
     <div className="prepare-page">
@@ -239,36 +227,11 @@ export function GeneratingView({
       ) : null}
 
       {activity.length > 0 ? (
-        <section className="activity-log" aria-label="Activity log">
-          <div className="activity-log-header">
-            <span className="activity-log-title">Live activity</span>
-            <span className="activity-log-meta">
-              {activity.length} event{activity.length === 1 ? "" : "s"} ·{" "}
-              {Math.floor((Date.now() - startedAtRef.current) / 1000)}s elapsed
-            </span>
-          </div>
-          <ol className="activity-log-list" ref={logRef}>
-            {activity.map((e) => (
-              <li
-                key={e.id}
-                className={"activity-row " + PHASE_DOT_CLASS[e.phase]}
-              >
-                <span className="activity-time">
-                  {formatRelativeTime(e.ts, startedAtRef.current)}
-                </span>
-                <span className="activity-dot" aria-hidden>
-                  ●
-                </span>
-                <span className="activity-body">
-                  <span className="activity-message">{e.message}</span>
-                  {e.detail ? (
-                    <span className="activity-detail">{e.detail}</span>
-                  ) : null}
-                </span>
-              </li>
-            ))}
-          </ol>
-        </section>
+        <ActivityLog
+          entries={activity}
+          startedAt={startedAtRef.current}
+          title="Live activity"
+        />
       ) : null}
 
       {error ? (
@@ -296,14 +259,6 @@ export function GeneratingView({
       </div>
     </div>
   );
-}
-
-function formatRelativeTime(ts: number, startedAt: number): string {
-  const seconds = Math.max(0, Math.floor((ts - startedAt) / 1000));
-  if (seconds < 60) return `+${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remSeconds = seconds % 60;
-  return `+${minutes}m${remSeconds.toString().padStart(2, "0")}s`;
 }
 
 function Spinner() {

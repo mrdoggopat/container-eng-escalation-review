@@ -5,7 +5,15 @@ import type {
   PublishOptions,
   PublishProgress,
 } from "../../lib/confluence";
-import { ConfluenceError, publishReport } from "../../lib/confluence";
+import {
+  ConfluenceError,
+  PublishCancelledError,
+  publishReport,
+} from "../../lib/confluence";
+import {
+  ActivityLog,
+  type ActivityLogEntry,
+} from "../../components/ActivityLog/ActivityLog";
 import "./PublishToConfluenceDialog.css";
 
 type Phase =
@@ -34,22 +42,70 @@ export function PublishToConfluenceDialog({
   const [parent, setParent] = useState(defaultParent);
   const [status, setStatus] = useState<"current" | "draft">("draft");
   const [phase, setPhase] = useState<Phase>({ kind: "form" });
+  const [activity, setActivity] = useState<ActivityLogEntry[]>([]);
+  const nextIdRef = useRef(0);
+  const startedAtRef = useRef<number>(0);
   const cancelledRef = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
+
+  function pushActivity(message: string, detail?: string) {
+    setActivity((prev) => {
+      const last = prev[prev.length - 1];
+      if (last && last.message === message && last.detail === detail) return prev;
+      return [
+        ...prev,
+        {
+          id: nextIdRef.current++,
+          ts: Date.now(),
+          message,
+          detail,
+          tone: "confluence",
+        },
+      ];
+    });
+  }
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape" && phase.kind !== "publishing") onClose();
+      if (e.key !== "Escape") return;
+      if (phase.kind === "publishing") {
+        // First Esc during an in-flight publish aborts the request;
+        // a second Esc (after we're back at the form / success / error) closes.
+        handleCancel();
+      } else {
+        onClose();
+      }
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onClose, phase.kind]);
 
   useEffect(() => {
     return () => {
       cancelledRef.current = true;
+      abortRef.current?.abort();
     };
   }, []);
+
+  function handleCancel() {
+    if (abortRef.current && !abortRef.current.signal.aborted) {
+      abortRef.current.abort();
+    }
+  }
+
+  function handleClose() {
+    // X / backdrop / explicit close. If a publish is in flight, abort it first
+    // so the underlying fetch doesn't keep running in the background.
+    if (phase.kind === "publishing") {
+      handleCancel();
+      // Don't dismiss yet — let the catch-block in handleSubmit flip the phase
+      // to "form" or "error". The user can then dismiss normally.
+      return;
+    }
+    onClose();
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -62,22 +118,53 @@ export function PublishToConfluenceDialog({
       storageBody,
     };
     if (!opts.title || !opts.spaceQuery) return;
+    setActivity([]);
+    nextIdRef.current = 0;
+    startedAtRef.current = Date.now();
     setPhase({ kind: "publishing", progress: null });
+    pushActivity(
+      `Starting Confluence publish for "${opts.title}"`,
+      `Target space: "${opts.spaceQuery}"${opts.parentPageTitle ? ` · under "${opts.parentPageTitle}"` : " · at space root"} · ${opts.status === "draft" ? "draft" : "current"}`,
+    );
+    // Fresh AbortController per attempt so prior aborts don't poison a retry.
+    abortRef.current = new AbortController();
+    const signal = abortRef.current.signal;
     try {
-      const result = await publishReport(credentials, opts, (p) => {
-        if (cancelledRef.current) return;
-        setPhase({ kind: "publishing", progress: p });
-      });
+      const result = await publishReport(
+        credentials,
+        opts,
+        (p) => {
+          if (cancelledRef.current || signal.aborted) return;
+          pushActivity(p.message, p.detail);
+          setPhase({ kind: "publishing", progress: p });
+        },
+        signal,
+      );
       if (cancelledRef.current) return;
+      pushActivity(
+        `Done — page created in Confluence`,
+        `Status: ${result.status} · Open: ${result.webUrl}`,
+      );
       setPhase({ kind: "success", result });
     } catch (err) {
       if (cancelledRef.current) return;
+      // User-cancelled (abort button / Esc / dialog close): go back to form
+      // silently rather than showing a red error callout.
+      if (err instanceof PublishCancelledError || signal.aborted) {
+        pushActivity(
+          "Publish cancelled",
+          "Aborted by user — no Confluence page was created.",
+        );
+        setPhase({ kind: "form" });
+        return;
+      }
       const message =
         err instanceof ConfluenceError
           ? err.message + formatDetail(err.detail)
           : err instanceof Error
             ? err.message
             : String(err);
+      pushActivity(`Publish failed`, message);
       setPhase({ kind: "error", message });
     }
   }
@@ -89,12 +176,9 @@ export function PublishToConfluenceDialog({
       aria-modal="true"
       aria-labelledby="publish-dialog-title"
       onClick={(e) => {
-        if (
-          e.target === e.currentTarget &&
-          phase.kind !== "publishing"
-        ) {
-          onClose();
-        }
+        // Backdrop click: same semantics as the X — abort if publishing,
+        // dismiss otherwise.
+        if (e.target === e.currentTarget) handleClose();
       }}
     >
       <div className="modal-panel publish-panel" ref={dialogRef}>
@@ -103,9 +187,15 @@ export function PublishToConfluenceDialog({
           <button
             type="button"
             className="callout-dismiss"
-            onClick={onClose}
-            disabled={phase.kind === "publishing"}
-            aria-label="Close"
+            onClick={handleClose}
+            aria-label={
+              phase.kind === "publishing" ? "Cancel publish" : "Close"
+            }
+            title={
+              phase.kind === "publishing"
+                ? "Cancel publish (Esc)"
+                : "Close (Esc)"
+            }
           >
             ✕
           </button>
@@ -203,29 +293,30 @@ export function PublishToConfluenceDialog({
           <div className="publish-progress">
             <div className="phase-row active">
               <span className="phase-bullet" aria-hidden>
-                <span className="spinner" aria-hidden>
-                  <svg width="14" height="14" viewBox="0 0 14 14">
-                    <circle
-                      cx="7"
-                      cy="7"
-                      r="5"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeOpacity="0.25"
-                      strokeWidth="2"
-                    />
-                    <path
-                      d="M 7 2 A 5 5 0 0 1 12 7"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                    />
-                  </svg>
-                </span>
+                <PublishSpinner />
               </span>
               <span>{phase.progress?.message ?? "Working…"}</span>
             </div>
+            {phase.progress?.detail ? (
+              <p className="publish-progress-detail">{phase.progress.detail}</p>
+            ) : null}
+            <ActivityLog
+              entries={activity}
+              startedAt={startedAtRef.current}
+              title="Confluence activity"
+              emptyHint="Waiting for first response from Confluence…"
+              maxHeight={200}
+            />
+            <footer className="publish-actions">
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={handleCancel}
+                disabled={!!abortRef.current?.signal.aborted}
+              >
+                {abortRef.current?.signal.aborted ? "Cancelling…" : "Cancel"}
+              </button>
+            </footer>
           </div>
         ) : null}
 
@@ -238,6 +329,14 @@ export function PublishToConfluenceDialog({
                 <strong>{phase.result.status}</strong>.
               </p>
             </div>
+            {activity.length > 0 ? (
+              <ActivityLog
+                entries={activity}
+                startedAt={startedAtRef.current}
+                title="Publish trace"
+                maxHeight={180}
+              />
+            ) : null}
             <footer className="publish-actions">
               <a
                 className="primary-button"
@@ -260,6 +359,14 @@ export function PublishToConfluenceDialog({
               <strong>Publish failed</strong>
               <p>{phase.message}</p>
             </div>
+            {activity.length > 0 ? (
+              <ActivityLog
+                entries={activity}
+                startedAt={startedAtRef.current}
+                title="Publish trace (failed)"
+                maxHeight={180}
+              />
+            ) : null}
             <footer className="publish-actions">
               <button type="button" className="ghost-button" onClick={onClose}>
                 Cancel
@@ -276,6 +383,31 @@ export function PublishToConfluenceDialog({
         ) : null}
       </div>
     </div>
+  );
+}
+
+function PublishSpinner() {
+  return (
+    <span className="spinner" aria-hidden>
+      <svg width="14" height="14" viewBox="0 0 14 14">
+        <circle
+          cx="7"
+          cy="7"
+          r="5"
+          fill="none"
+          stroke="currentColor"
+          strokeOpacity="0.25"
+          strokeWidth="2"
+        />
+        <path
+          d="M 7 2 A 5 5 0 0 1 12 7"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+        />
+      </svg>
+    </span>
   );
 }
 

@@ -192,9 +192,32 @@ ${teamList}${teamContextBlock}
 CARD SUMMARY GUIDANCE:
 When summarizing the card, draw from the Summary field, the description, and any "Pre-Investigation Notes" / "Investigation Notes" content if provided. Prefer factual statements grounded in those notes over speculation.
 
-PREVENTABILITY RULE (apply strictly):
-A card is "preventable" if someone who is NOT on the internal escalation team AND NOT the card's Reporter provided a suggestion, solution, fix, or PR in the comments — AND that contribution was the key to resolution.
-If no such external contribution exists, the card is NOT preventable.
+PREVENTABILITY RULE (apply strictly — ALL THREE must be true):
+A card is "preventable" if and only if ALL of the following hold:
+  (1) EXTERNAL CONTRIBUTION — someone who is NOT on the internal escalation team AND NOT the card's Reporter provided a suggestion, solution, fix, or pointer in the comments that became the key to resolution.
+  (2) INTERNALLY DISCOVERABLE — the resolution involved information the TEE could plausibly have found themselves, meaning ANY of:
+       - it was already documented in Confluence, internal runbooks, or product docs;
+       - a prior Jira card already covered the same root cause / behavior;
+       - it represented a lapse in judgment by the TEE (standard escalation step skipped, wrong team consulted, ignored signal);
+       - it was something the TEE may have forgotten or overlooked (a configuration option, a known limitation, a recent release note, a default behavior change).
+  (3) NOT A PR FIX — the resolution did not require new engineering code to land (see hard override below).
+
+If ANY of (1)(2)(3) is false, the card is NOT preventable.
+
+Common NOT-preventable patterns (be strict — do not mark these preventable):
+- An external commenter pointed to specialized knowledge that wasn't internally documented anywhere (e.g. a third-party vendor quirk, customer's idiosyncratic environment detail, deep kernel/OS behavior only that person knew).
+- Resolution required novel engineering investigation / debugging that didn't exist as written knowledge yet.
+- The "external" person was the only realistic source of the missing context, and there was no reasonable internal path for the TEE to obtain it.
+- Customer-only context: the answer was in the customer's logs / config / setup, which the TEE could only get by asking.
+
+Common preventable patterns (the signal we want):
+- The answer was in Confluence the whole time and the TEE didn't search there.
+- A prior Jira card already documented the same root cause and the TEE missed it.
+- A standard runbook step was skipped.
+- A peer engineer pointed out a configuration flag or known limitation that IS documented in our own docs.
+- The team failed to check release notes / changelog when a customer reported a regression.
+
+In the preventableReason, when marking preventable, name the specific internal resource (Confluence page, prior CONS card, runbook) or process step that would have caught it. If you cannot name one, the card is probably NOT preventable.
 
 HARD OVERRIDE — PR fixes are NEVER preventable:
 If the solutionCategory is "PR fix" (i.e. resolution required an engineering code change / PR landing in our codebase), preventable MUST be false regardless of any external comments. The premise is that a code bug had to be patched, so the escalation could not have been avoided by the team in advance; the engineering work was the resolution. In the preventableReason, explain that the fix required a code change so it is not classified as preventable by team-side action.
@@ -307,6 +330,206 @@ async function analyzeCard(
     nonTeeInvolvement: String(json.nonTeeInvolvement ?? "None."),
     improvement: String(json.improvement ?? ""),
   };
+}
+
+/**
+ * Asymmetric verification pass. The first-pass `analyzeCard` already enforces
+ * the preventability rule, but it's possible to mark a card "not preventable"
+ * even when an external commenter contributed a suggestion that was actually
+ * the key to resolution. This second pass re-reads the external comments with
+ * the model's first-pass reasoning in hand and gives it a chance to flip.
+ *
+ * Only triggered for cards that are (a) not a PR fix, (b) initially marked
+ * not preventable, and (c) actually have external comments — so the cost is
+ * bounded to the subset most likely to be misclassified false-negatives.
+ *
+ * Only `preventable` + `preventableReason` are updated; the solution category,
+ * summary, and other fields are kept as-is.
+ */
+async function recheckPreventability(
+  creds: Credentials,
+  issue: JiraIssue,
+  firstPass: {
+    preventable: boolean;
+    preventableReason: string;
+    solutionCategory: SolutionCategory;
+  },
+  externalComments: { name: string; text: string }[],
+): Promise<{
+  preventable: boolean;
+  preventableReason: string;
+  changed: boolean;
+  changeReason: string;
+}> {
+  const summary = (issue.fields.summary as string | undefined) ?? issue.key;
+  const reporter =
+    (issue.fields.reporter as { displayName?: string } | undefined)
+      ?.displayName ?? "—";
+  const teamList =
+    creds.teeMembers.length === 0
+      ? "(no internal team configured)"
+      : creds.teeMembers.map((m) => `- ${m}`).join("\n");
+
+  const systemPrompt = `You are double-checking a Jira escalation card's preventability classification for an internal escalation review.
+
+PREVENTABILITY RULE (apply strictly — ALL THREE must be true):
+A card is "preventable" if and only if ALL of the following hold:
+  (1) EXTERNAL CONTRIBUTION — a non-team, non-Reporter commenter provided the key to resolution.
+  (2) INTERNALLY DISCOVERABLE — the resolution involved information the TEE could plausibly have found themselves: already documented in Confluence, in a prior Jira card, in a runbook, or a lapse in standard process / something the TEE forgot or overlooked.
+  (3) NOT A PR FIX — the resolution did not require new engineering code to land.
+
+If ANY of (1)(2)(3) is false, the card is NOT preventable.
+
+Specifically: an external contribution that surfaced SPECIALIZED knowledge not documented anywhere internally (third-party vendor quirks, customer-only environment context, deep OS internals only that person knew) does NOT make a card preventable — the TEE had no reasonable way to find it.
+
+The internal escalation team consists ONLY of:
+${teamList}
+
+A first-pass analysis judged this card NOT preventable, but external commenters (non-team, non-Reporter) DID participate. Re-read those external comments carefully and ask BOTH:
+- Did any external suggestion actually drive the resolution? AND
+- Was that suggestion something the TEE could have found themselves (Confluence, prior cards, runbook, standard process), or was it specialized knowledge only that commenter had?
+
+If you AGREE with the first pass — either the external comments were tangential/requests-for-info, OR they provided real value but represented specialized knowledge the TEE couldn't have found internally — return preventable: false and explain briefly.
+
+If you DISAGREE — an external contribution drove the resolution AND it was something internally discoverable (you can name the Confluence page, prior card, or process gap that the TEE missed) — return preventable: true, identify which commenter, what they contributed, AND what internal resource / process step the TEE should have used.
+
+Respond with ONLY a valid JSON object — no prose, no markdown fences:
+{
+  "preventable": boolean,
+  "preventableReason": string,   // 1-2 sentences justifying your final answer
+  "changed": boolean,            // true ONLY if you flipped from the first pass
+  "changeReason": string         // brief: why you flipped (or "" if unchanged)
+}`;
+
+  const userMessage = [
+    `Card: ${issue.key} — ${summary}`,
+    `Reporter: ${reporter}`,
+    `Solution category (first pass): ${firstPass.solutionCategory}`,
+    `First-pass preventability: NOT preventable`,
+    `First-pass reason: ${firstPass.preventableReason}`,
+    "",
+    `External comments (NOT on the internal team, NOT the Reporter) — ${externalComments.length} total:`,
+    externalComments.length === 0
+      ? "(none)"
+      : externalComments
+          .slice(0, 30)
+          .map(
+            (c, i) =>
+              `--- comment ${i + 1} by ${c.name} ---\n${c.text.slice(0, 1500)}`,
+          )
+          .join("\n\n"),
+  ].join("\n");
+
+  const resp = await anthropicMessages(creds, {
+    system: systemPrompt,
+    messages: [{ role: "user", content: userMessage }],
+    max_tokens: 600,
+  });
+  const text = extractText(resp).trim();
+  const json = parseJsonObject(text);
+  const preventable = Boolean(json.preventable);
+  return {
+    preventable,
+    preventableReason: String(
+      json.preventableReason ?? firstPass.preventableReason,
+    ),
+    // Trust the model's "changed" flag, but also self-correct: if it claims
+    // unchanged but the bool actually flipped, mark it changed.
+    changed:
+      Boolean(json.changed) || preventable !== firstPass.preventable,
+    changeReason: String(json.changeReason ?? ""),
+  };
+}
+
+/**
+ * Cross-cutting synthesis pass. After every card has been individually
+ * analyzed, ask Claude to look across them and identify 3–5 *patterns* and
+ * concrete improvement recommendations that span multiple cards. The per-card
+ * `improvement` field captures one-off suggestions; this step is what populates
+ * the report's top-level "Improvement Recommendations" section.
+ */
+async function synthesizeImprovements(
+  creds: Credentials,
+  cards: EscalationCard[],
+): Promise<{ title: string; body: string }[]> {
+  if (cards.length === 0) return [];
+
+  const cardSummaries = cards
+    .map((c) => {
+      const flags = [
+        c.preventable ? "PREVENTABLE" : "not-preventable",
+        c.solutionCategory,
+        c.escalationKind,
+      ].join(" · ");
+      return [
+        `[${c.id}] ${c.title}`,
+        `  Flags: ${flags}`,
+        `  Summary: ${c.summary}`,
+        `  Per-card improvement note: ${c.improvement || "—"}`,
+      ].join("\n");
+    })
+    .join("\n\n");
+
+  const preventableCount = cards.filter((c) => c.preventable).length;
+  const prFixCount = cards.filter((c) => c.solutionCategory === "PR fix").length;
+  const customerEnvCount = cards.filter(
+    (c) => c.solutionCategory === "Customer environment specific issue",
+  ).length;
+
+  const systemPrompt = `You are synthesizing cross-cutting improvement recommendations for an internal Datadog Containers Escalation-to-Engineering review.
+
+You will receive a list of all escalation cards from the review period, with per-card classification and individual improvement notes. Your job is to look ACROSS the cards and identify 3–5 patterns or systemic issues that, if addressed, would reduce escalations or shorten resolution time.
+
+GUIDANCE:
+- Look for recurring themes: same component, same release version, same customer environment, similar root causes, similar process gaps.
+- Prefer SYSTEMIC recommendations (process changes, runbook updates, documentation gaps, test coverage) over one-off "fix this card" notes.
+- For preventable cards specifically (the TEE could have found the answer internally), focus the recommendation on the missing discoverability — what knowledge base, runbook, or process step would have caught it.
+- For PR-fix clusters, suggest engineering hygiene improvements (test coverage on a specific path, lint rule, design review gate, release-gate check).
+- For customer-environment clusters, suggest pre-flight checklists, documentation, or onboarding improvements.
+- Be specific. "Improve documentation" is too vague — say WHICH page in WHICH space needs WHAT updated.
+- It's OK to return fewer than 5 recommendations if there aren't enough patterns. Quality over quantity.
+
+OUTPUT: respond with ONLY a single valid JSON object — no prose, no markdown fences:
+{
+  "recommendations": [
+    {
+      "title": string,   // short, action-oriented (e.g. "Add OpenShift init-container runbook section")
+      "body": string     // 2-4 sentences: the pattern, the affected cards (cite keys), the specific action
+    },
+    ...
+  ]
+}`;
+
+  const userMessage = [
+    `Review period totals:`,
+    `- ${cards.length} escalation${cards.length === 1 ? "" : "s"} analyzed`,
+    `- ${preventableCount} preventable`,
+    `- ${prFixCount} resolved by PR fix`,
+    `- ${customerEnvCount} customer-environment-specific`,
+    "",
+    "Cards:",
+    cardSummaries,
+  ].join("\n");
+
+  const resp = await anthropicMessages(creds, {
+    system: systemPrompt,
+    messages: [{ role: "user", content: userMessage }],
+    max_tokens: 2000,
+  });
+  const text = extractText(resp).trim();
+  const json = parseJsonObject(text);
+  const raw = json.recommendations;
+  if (!Array.isArray(raw)) return [];
+  const out: { title: string; body: string }[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const obj = item as Record<string, unknown>;
+    const title = typeof obj.title === "string" ? obj.title.trim() : "";
+    const body = typeof obj.body === "string" ? obj.body.trim() : "";
+    if (!title || !body) continue;
+    out.push({ title, body });
+  }
+  return out;
 }
 
 function parseJsonObject(text: string): Record<string, unknown> {
@@ -501,6 +724,64 @@ export async function generateReport(
         improvement: "—",
       };
     }
+
+    // Second-pass verification: if Claude marked this NOT preventable but the
+    // card has external commentary (and isn't a PR fix, which is always
+    // overridden), do a focused re-check to catch missed contributions.
+    const teamSet = new Set(creds.teeMembers);
+    const externalComments = commentersOutsideTeamAndReporter(issue, teamSet);
+    const eligibleForRecheck =
+      analysis.solutionCategory !== "PR fix" &&
+      !analysis.preventable &&
+      externalComments.length > 0;
+    if (eligibleForRecheck) {
+      onProgress({
+        phase: "analyzing",
+        message: `Re-checking ${issue.key} for missed external contributions`,
+        detail: `${externalComments.length} external commenter${externalComments.length === 1 ? "" : "s"} found — verifying first-pass "not preventable" classification.`,
+        current: i,
+        total: issues.length,
+      });
+      try {
+        const recheck = await recheckPreventability(
+          creds,
+          issue,
+          {
+            preventable: analysis.preventable,
+            preventableReason: analysis.preventableReason,
+            solutionCategory: analysis.solutionCategory,
+          },
+          externalComments,
+        );
+        if (recheck.changed) {
+          analysis = {
+            ...analysis,
+            preventable: recheck.preventable,
+            preventableReason: recheck.preventableReason,
+          };
+          onProgress({
+            phase: "analyzing",
+            message: `Re-check flipped ${issue.key} to ${recheck.preventable ? "preventable" : "not preventable"}`,
+            detail: recheck.changeReason || recheck.preventableReason,
+            current: i,
+            total: issues.length,
+          });
+        } else {
+          onProgress({
+            phase: "analyzing",
+            message: `Re-check confirmed ${issue.key} as not preventable`,
+            detail: recheck.preventableReason,
+            current: i,
+            total: issues.length,
+          });
+        }
+      } catch (err) {
+        warnings.push(
+          `Re-check failed for ${issue.key} (${err instanceof Error ? err.message : String(err)}); keeping first-pass classification.`,
+        );
+      }
+    }
+
     onProgress({
       phase: "analyzing",
       message: `Finished ${issue.key}`,
@@ -538,10 +819,34 @@ export async function generateReport(
     });
   }
 
+  // 5. Cross-cutting improvement synthesis. One final Claude call that looks
+  // across all analyzed cards and suggests systemic improvements / patterns.
+  onProgress({
+    phase: "assembling",
+    message: "Synthesizing cross-cutting improvement recommendations…",
+    detail: `Looking across ${cards.length} card${cards.length === 1 ? "" : "s"} for patterns, recurring themes, and systemic gaps.`,
+  });
+  let improvements: { title: string; body: string }[] = [];
+  try {
+    improvements = await synthesizeImprovements(creds, cards);
+    onProgress({
+      phase: "assembling",
+      message: `Produced ${improvements.length} improvement recommendation${improvements.length === 1 ? "" : "s"}`,
+      detail:
+        improvements.length === 0
+          ? "Claude returned no cross-cutting patterns — too few cards or no recurring themes."
+          : improvements.map((r) => r.title).join(" · "),
+    });
+  } catch (err) {
+    warnings.push(
+      `Cross-cutting synthesis failed (${err instanceof Error ? err.message : String(err)}); per-card improvement notes are still available on each card.`,
+    );
+  }
+
   onProgress({
     phase: "assembling",
     message: "Assembling report…",
-    detail: `${cards.length} card${cards.length === 1 ? "" : "s"} analyzed, ${cards.filter((c) => c.preventable).length} flagged preventable.`,
+    detail: `${cards.length} card${cards.length === 1 ? "" : "s"} analyzed, ${cards.filter((c) => c.preventable).length} flagged preventable, ${improvements.length} cross-cutting recommendation${improvements.length === 1 ? "" : "s"}.`,
   });
 
   const report: ReportPeriod = {
@@ -550,7 +855,7 @@ export async function generateReport(
     rangeEnd: timeframe.end,
     totalCardsCreated,
     cards,
-    improvements: [],
+    improvements,
   };
 
   return { report, warnings };
