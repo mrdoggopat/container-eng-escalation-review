@@ -1,0 +1,29 @@
+.theme-toggle {
+  position: fixed;
+  top: 14px;
+  right: 16px;
+  z-index: 6;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  background: var(--bg-elevated);
+  border: 1px solid var(--stroke);
+  color: var(--text-secondary);
+  transition:
+    background 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
+}
+.theme-toggle:hover {
+  color: var(--text-primary);
+  background: var(--bg-row);
+  border-color: var(--stroke-strong);
+}
+.theme-toggle svg {
+  width: 14px;
+  height: 14px;
+}

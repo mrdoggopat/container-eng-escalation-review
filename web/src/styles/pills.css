@@ -1,0 +1,53 @@
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--stroke-strong);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.pill.tone-info {
+  color: var(--tone-info);
+  border-color: rgba(106, 161, 255, 0.4);
+  background: var(--tone-info-bg);
+}
+.pill.tone-warning {
+  color: var(--tone-warning);
+  border-color: rgba(241, 178, 87, 0.4);
+  background: var(--tone-warning-bg);
+}
+.pill.tone-danger {
+  color: var(--tone-danger);
+  border-color: rgba(227, 107, 107, 0.4);
+  background: var(--tone-danger-bg);
+}
+.pill.tone-neutral {
+  color: var(--tone-neutral);
+}
+.pill.clickable {
+  cursor: pointer;
+  border: 1px solid var(--stroke-strong);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  padding: 4px 12px;
+  font-size: 12px;
+}
+.pill.clickable:hover {
+  background: var(--bg-row);
+  color: var(--text-primary);
+}
+.pill.clickable.active {
+  background: var(--text-primary);
+  color: var(--bg-page);
+  border-color: var(--text-primary);
+}
+.pill.clickable.tone-warning.active {
+  background: var(--tone-warning);
+  color: var(--bg-page);
+  border-color: var(--tone-warning);
+}

@@ -1,0 +1,90 @@
+.multi-timeframe-page {
+  max-width: 880px;
+}
+.multi-timeframe-list-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.multi-timeframe-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.multi-timeframe-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto 16px auto auto;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--stroke);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.multi-timeframe-row.has-error {
+  border-color: var(--tone-danger);
+  background: var(--tone-danger-bg);
+}
+.multi-timeframe-index {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--bg-row);
+  border: 1px solid var(--stroke);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.multi-timeframe-label,
+.multi-timeframe-date {
+  background: var(--bg-page);
+  color: var(--text-primary);
+  border: 1px solid var(--stroke);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-family: var(--font-sans);
+}
+.multi-timeframe-label {
+  width: 100%;
+}
+.multi-timeframe-date {
+  font-variant-numeric: tabular-nums;
+}
+.multi-timeframe-sep {
+  font-size: 12px;
+  text-align: center;
+}
+.multi-timeframe-remove {
+  padding: 4px 10px;
+  font-size: 14px;
+  line-height: 1;
+}
+.multi-timeframe-remove:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+@media (max-width: 720px) {
+  .multi-timeframe-row {
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    row-gap: 6px;
+  }
+  .multi-timeframe-label {
+    grid-column: 2 / 4;
+  }
+  .multi-timeframe-date {
+    grid-column: span 1;
+  }
+  .multi-timeframe-sep {
+    display: none;
+  }
+  .multi-timeframe-remove {
+    grid-column: 3 / 4;
+    justify-self: end;
+  }
+}

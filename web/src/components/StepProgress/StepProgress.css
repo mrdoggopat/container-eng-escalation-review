@@ -1,0 +1,70 @@
+.step-progress {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-bottom: 4px;
+}
+.step-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.step-dot-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px solid var(--stroke-strong);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+}
+.step-dot-label {
+  font-weight: 500;
+}
+.step-dot.current .step-dot-num {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg-page);
+}
+.step-dot.current,
+.step-dot.current .step-dot-label {
+  color: var(--text-primary);
+}
+.step-dot.done .step-dot-num {
+  background: rgba(106, 161, 255, 0.18);
+  border-color: rgba(106, 161, 255, 0.45);
+  color: var(--accent);
+}
+.step-dot.done,
+.step-dot.done .step-dot-label {
+  color: var(--text-secondary);
+}
+.step-connector {
+  flex: 1;
+  min-width: 24px;
+  max-width: 80px;
+  height: 1px;
+  background: var(--stroke-strong);
+  margin: 0 12px;
+}
+.step-connector.done {
+  background: rgba(106, 161, 255, 0.45);
+}
+
+@media (max-width: 600px) {
+  .step-connector {
+    min-width: 12px;
+    margin: 0 6px;
+  }
+  .step-dot-label {
+    display: none;
+  }
+}

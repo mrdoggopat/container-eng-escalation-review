@@ -1,0 +1,125 @@
+.compare-page {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 56px 32px 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+.compare-header h1 {
+  font-size: 26px;
+  margin: 0 0 6px 0;
+}
+.compare-header p {
+  max-width: 70ch;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.compare-list-section,
+.compare-actions-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.compare-empty {
+  background: var(--bg-elevated);
+  border: 1px dashed var(--stroke-strong);
+  border-radius: 6px;
+  padding: 20px 18px;
+}
+
+.compare-entries {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.compare-entry {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--stroke);
+  border-radius: 6px;
+  padding: 12px 14px;
+}
+.compare-entry.has-overlap {
+  border-color: var(--tone-danger);
+  background: var(--tone-danger-bg);
+}
+.compare-entry-index {
+  flex: 0 0 26px;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--bg-row);
+  border: 1px solid var(--stroke);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.compare-entry-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.compare-entry-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.compare-entry-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.compare-entry-remove {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.compare-overlap .warning-list {
+  margin: 6px 0 0 0;
+}
+
+.compare-add-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.compare-add-hint {
+  margin: 4px 0 0 0;
+}
+
+.compare-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--stroke);
+  padding-top: 16px;
+}
+.compare-submit {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}

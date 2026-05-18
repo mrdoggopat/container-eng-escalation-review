@@ -1,0 +1,108 @@
+:root {
+  color-scheme: dark;
+  --bg-page: #0f1115;
+  --bg-elevated: #161a22;
+  --bg-row: #1a1f29;
+  --bg-row-hover: #1e2430;
+  --text-primary: #e6e9ef;
+  --text-secondary: #a3a9b6;
+  --text-tertiary: #6b7280;
+  --stroke: #262b36;
+  --stroke-strong: #2f3543;
+  --accent: #6aa1ff;
+  --tone-info: #6aa1ff;
+  --tone-info-bg: rgba(106, 161, 255, 0.12);
+  --tone-warning: #f1b257;
+  --tone-warning-bg: rgba(241, 178, 87, 0.12);
+  --tone-danger: #e36b6b;
+  --tone-danger-bg: rgba(227, 107, 107, 0.12);
+  --tone-success: #6ec384;
+  --tone-success-bg: rgba(110, 195, 132, 0.12);
+  --tone-neutral: #9aa0ac;
+  --tone-neutral-bg: rgba(154, 160, 172, 0.1);
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono",
+    monospace;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg-page: #ffffff;
+  --bg-elevated: #f7f8fb;
+  --bg-row: #eef1f6;
+  --bg-row-hover: #e4e8f0;
+  --text-primary: #11151c;
+  --text-secondary: #4a5161;
+  --text-tertiary: #6e7585;
+  --stroke: #dde1ea;
+  --stroke-strong: #c3c9d4;
+  --accent: #2c63d6;
+  --tone-info: #2c63d6;
+  --tone-info-bg: rgba(44, 99, 214, 0.1);
+  --tone-warning: #b97411;
+  --tone-warning-bg: rgba(185, 116, 17, 0.12);
+  --tone-danger: #c0392b;
+  --tone-danger-bg: rgba(192, 57, 43, 0.1);
+  --tone-success: #2f8a4f;
+  --tone-success-bg: rgba(47, 138, 79, 0.12);
+  --tone-neutral: #6e7585;
+  --tone-neutral-bg: rgba(110, 117, 133, 0.1);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg-page);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+button {
+  font-family: inherit;
+  color: inherit;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+h1 {
+  font-size: 22px;
+}
+h2 {
+  font-size: 16px;
+  color: var(--text-primary);
+}
+h3 {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+p {
+  margin: 0;
+}

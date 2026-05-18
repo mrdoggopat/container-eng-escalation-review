@@ -1,0 +1,117 @@
+.selector-page {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 80px 32px 80px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+.selector-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.selector-header h1 {
+  font-size: 26px;
+}
+.selector-intro {
+  color: var(--text-secondary);
+  font-size: 14px;
+  max-width: 60ch;
+}
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+@media (max-width: 600px) {
+  .preset-grid {
+    grid-template-columns: 1fr;
+  }
+  .selector-page {
+    padding: 40px 16px 40px;
+  }
+}
+.preset-card {
+  text-align: left;
+  background: var(--bg-elevated);
+  border: 1px solid var(--stroke);
+  border-radius: 6px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+.preset-card:hover {
+  background: var(--bg-row);
+  border-color: var(--stroke-strong);
+}
+.preset-card.recommended {
+  border-color: rgba(106, 161, 255, 0.4);
+}
+.preset-label {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+}
+.preset-range {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.preset-hint {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
+
+.custom-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--stroke);
+  border-radius: 6px;
+  padding: 14px 16px;
+}
+.date-input {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 160px;
+  flex: 1;
+}
+.date-input-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  font-weight: 600;
+}
+.date-input input {
+  background: var(--bg-row);
+  border: 1px solid var(--stroke);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--text-primary);
+  font-family: inherit;
+  color-scheme: dark;
+}
+.date-input input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.selector-footnote {
+  margin-top: 4px;
+}

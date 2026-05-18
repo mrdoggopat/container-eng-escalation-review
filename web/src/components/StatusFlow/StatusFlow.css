@@ -1,0 +1,26 @@
+.status-flow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 0;
+  background: var(--bg-row);
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.status-step-wrap {
+  display: inline-flex;
+  align-items: center;
+}
+.status-step {
+  background: var(--bg-elevated);
+  border: 1px solid var(--stroke);
+  border-radius: 3px;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
+.status-arrow {
+  margin: 0 6px;
+  color: var(--text-tertiary);
+}

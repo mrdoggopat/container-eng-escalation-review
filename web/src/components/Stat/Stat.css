@@ -1,0 +1,35 @@
+.stat {
+  background: var(--bg-elevated);
+  border: 1px solid var(--stroke);
+  border-radius: 6px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.stat-value {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+.stat-value.tone-info {
+  color: var(--tone-info);
+}
+.stat-value.tone-warning {
+  color: var(--tone-warning);
+}
+.stat-value.tone-danger {
+  color: var(--tone-danger);
+}
+.stat-value.tone-success {
+  color: var(--tone-success);
+}
+.stat-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}

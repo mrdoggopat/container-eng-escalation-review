@@ -1,0 +1,69 @@
+.tooltip-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.tooltip-wrap > :disabled {
+  pointer-events: none;
+}
+.tooltip-bubble {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%) translateY(-4px);
+  background: var(--bg-elevated);
+  border: 1px solid var(--stroke-strong);
+  border-radius: 5px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  max-width: 280px;
+  width: max-content;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease,
+    visibility 0.12s;
+  z-index: 30;
+  text-align: center;
+  line-height: 1.4;
+}
+.tooltip-top {
+  bottom: calc(100% + 8px);
+}
+.tooltip-bottom {
+  top: calc(100% + 8px);
+}
+.tooltip-wrap:hover .tooltip-bubble,
+.tooltip-wrap:focus-within .tooltip-bubble {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+.tooltip-bubble::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  margin-left: -6px;
+  border: 6px solid transparent;
+}
+.tooltip-top::after {
+  top: 100%;
+  border-top-color: var(--stroke-strong);
+}
+.tooltip-bottom::after {
+  bottom: 100%;
+  border-bottom-color: var(--stroke-strong);
+}
+.tooltip-hint {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-tertiary);
+  margin-top: 4px;
+}
+.tooltip-hint strong {
+  color: var(--tone-warning);
+  font-weight: 600;
+}

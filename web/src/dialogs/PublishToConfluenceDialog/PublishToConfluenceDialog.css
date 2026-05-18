@@ -1,0 +1,95 @@
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 56px 16px;
+  z-index: 100;
+  overflow-y: auto;
+}
+.modal-panel {
+  background: var(--bg-page);
+  border: 1px solid var(--stroke);
+  border-radius: 10px;
+  max-width: 520px;
+  width: 100%;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+}
+.publish-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px 12px;
+  border-bottom: 1px solid var(--stroke);
+}
+.publish-header h2 {
+  margin: 0;
+  font-size: 17px;
+}
+.publish-form,
+.publish-progress,
+.publish-success,
+.publish-error {
+  padding: 18px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.publish-form .field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+.publish-status-fieldset {
+  border: 1px solid var(--stroke);
+  border-radius: 6px;
+  padding: 10px 14px 12px;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.publish-status-fieldset legend {
+  padding: 0 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  font-weight: 600;
+}
+.publish-status-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.publish-status-option > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.publish-status-option input[type="radio"] {
+  margin-top: 4px;
+}
+.publish-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 6px;
+}
+.publish-progress .phase-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+.publish-success a.primary-button {
+  text-decoration: none;
+}

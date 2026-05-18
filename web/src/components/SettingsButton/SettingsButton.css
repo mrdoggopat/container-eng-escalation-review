@@ -1,0 +1,63 @@
+.settings-button {
+  position: fixed;
+  top: 14px;
+  right: 60px;
+  z-index: 5;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
+}
+.settings-button.configured {
+  background: var(--bg-elevated);
+  border: 1px solid var(--stroke-strong);
+  color: var(--text-secondary);
+  padding: 6px 12px 6px 10px;
+  font-size: 12px;
+}
+.settings-button.configured:hover {
+  color: var(--text-primary);
+  background: var(--bg-row);
+}
+.settings-button.unconfigured {
+  background: var(--tone-warning-bg);
+  border: 1px solid var(--tone-warning);
+  color: var(--tone-warning);
+  padding: 8px 16px 8px 12px;
+  font-weight: 600;
+}
+.settings-button.unconfigured:hover {
+  background: rgba(241, 178, 87, 0.22);
+}
+.settings-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+}
+.settings-dot.on {
+  background: var(--tone-success);
+}
+.settings-dot.off {
+  background: var(--tone-warning);
+  animation: settings-pulse 1.8s ease-in-out infinite;
+}
+@keyframes settings-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.settings-text {
+  line-height: 1;
+}

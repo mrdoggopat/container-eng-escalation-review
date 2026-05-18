@@ -71,6 +71,8 @@ Create a file named `<YYYY-MM-DD>-<YYYY-MM-DD>.md` in the project root (e.g. `20
 
 A card is **potentially preventable** if someone who is **not** on the TEE team and **not** the Reporter provided a suggestion, solution, fix, or PR in the comments.
 
+**Hard override:** if the Solution Category is **"PR fix"**, the card is **never** preventable — a code change was required, so the escalation could not have been avoided by team-side action in advance. The engineering work itself was the resolution.
+
 **TEE team members (not counted as external):**
 - Patrick Liang, Jack Davenport, Mathieu Colin, Akira Hiiro, Jan Lazaro
 

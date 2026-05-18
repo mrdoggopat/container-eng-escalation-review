@@ -1,0 +1,106 @@
+.dashboard-page {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 80px 32px 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+.dashboard-header {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+.dashboard-tag {
+  display: inline-block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--stroke);
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+.dashboard-title {
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.1;
+  letter-spacing: -0.005em;
+}
+.dashboard-tagline {
+  margin: 0;
+  font-size: 15px;
+  color: var(--text-secondary);
+  max-width: 60ch;
+  line-height: 1.55;
+}
+
+.dashboard-actions-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+.dashboard-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--stroke);
+  border-radius: 10px;
+  padding: 22px 22px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition:
+    border-color 150ms ease,
+    transform 150ms ease;
+}
+.dashboard-card:hover {
+  border-color: var(--stroke-strong);
+}
+.dashboard-card-eyebrow {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+  font-weight: 600;
+}
+.dashboard-card-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+.dashboard-card-desc {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  flex: 1 1 auto;
+}
+.dashboard-card-actions {
+  margin-top: 6px;
+}
+.dashboard-card-actions > button {
+  width: 100%;
+}
+
+.dashboard-footer {
+  display: flex;
+  justify-content: center;
+  margin-top: 8px;
+}
+
+@media (max-width: 900px) {
+  .dashboard-actions-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 600px) {
+  .dashboard-page {
+    padding: 48px 16px 56px;
+    gap: 22px;
+  }
+  .dashboard-title {
+    font-size: 24px;
+  }
+}
