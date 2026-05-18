@@ -140,4 +140,3 @@ container-eng-escalation-review/
 - **`prefers-color-scheme` not respected** — once you click the sun/moon toggle,
   the choice is saved to `localStorage` and overrides the system preference on
   subsequent visits. Clear `cons-review.theme` from devtools to reset.
-# container-eng-escalation-review
