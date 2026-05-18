@@ -23,7 +23,15 @@ export class PublishCancelledError extends Error {
   }
 }
 
-const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
+/**
+ * Per-request timeout for Confluence proxy calls. Kept short on purpose: any
+ * single Confluence API call should complete in well under 10s under normal
+ * conditions (space lookup, page-by-title search, page create). If it takes
+ * longer than this, something upstream is wrong (dev proxy not running,
+ * Confluence throttling, network) and we'd rather surface that fast than let
+ * the user stare at a hung spinner.
+ */
+const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
 
 /**
  * Combines an optional caller-supplied AbortSignal with a per-request timeout
@@ -125,6 +133,55 @@ export async function findPageByTitle(
   return res.page;
 }
 
+/**
+ * Look up a Confluence folder by title within a space. Folders are a separate
+ * content type from pages; the proxy uses CQL (`type=folder`) under the hood.
+ */
+export async function findFolderByTitle(
+  creds: Credentials,
+  spaceKey: string,
+  title: string,
+  signal?: AbortSignal,
+): Promise<{ id: string; title: string } | null> {
+  const res = await postJson<{ folder: { id: string; title: string } | null }>(
+    "/api/confluence/folder-by-title",
+    { ...atlassianAuth(creds), spaceKey, title },
+    signal,
+  );
+  return res.folder;
+}
+
+/**
+ * Resolve a parent ancestor by title — checks pages first (most common case),
+ * then folders. Confluence accepts either as an `ancestors` entry on create,
+ * so the resulting `id` can be passed straight to `createPage`.
+ */
+export type ParentAncestor = {
+  id: string;
+  title: string;
+  type: "page" | "folder";
+};
+
+export async function findParentByTitle(
+  creds: Credentials,
+  space: { key: string; id: string },
+  title: string,
+  signal?: AbortSignal,
+): Promise<ParentAncestor | null> {
+  const page = await findPageByTitle(creds, space.key, title, signal);
+  if (page) return { id: page.id, title: page.title, type: "page" };
+  try {
+    const folder = await findFolderByTitle(creds, space.key, title, signal);
+    if (folder) return { id: folder.id, title: folder.title, type: "folder" };
+  } catch (err) {
+    // CQL-based folder search is well-supported on Confluence Cloud, but
+    // don't fail the whole publish if a permissions edge-case trips it.
+    if (err instanceof PublishCancelledError) throw err;
+    console.warn("[confluence] folder lookup failed:", err);
+  }
+  return null;
+}
+
 export type CreatePageResult = {
   id: string;
   title: string;
@@ -214,19 +271,19 @@ export async function publishReport(
   if (opts.parentPageTitle) {
     onProgress({
       step: "resolve-parent",
-      message: `Finding parent page "${opts.parentPageTitle}"`,
-      detail: `Searching within space ${space.name} (${space.key})…`,
+      message: `Finding parent "${opts.parentPageTitle}"`,
+      detail: `Searching pages then folders within space ${space.name} (${space.key})…`,
     });
     checkCancel();
-    const parent = await findPageByTitle(
+    const parent = await findParentByTitle(
       creds,
-      space.key,
+      { key: space.key, id: space.id },
       opts.parentPageTitle,
       signal,
     );
     if (!parent) {
       throw new ConfluenceError(
-        `Couldn't find parent page "${opts.parentPageTitle}" in space "${space.name}".`,
+        `Couldn't find parent "${opts.parentPageTitle}" (as page or folder) in space "${space.name}".`,
         404,
         { spaceKey: space.key, title: opts.parentPageTitle },
       );
@@ -234,8 +291,8 @@ export async function publishReport(
     parentId = parent.id;
     onProgress({
       step: "resolve-parent",
-      message: `Parent page resolved`,
-      detail: `"${parent.title}" · id: ${parent.id}`,
+      message: `Parent ${parent.type} resolved`,
+      detail: `"${parent.title}" · ${parent.type} · id: ${parent.id}`,
     });
   } else {
     onProgress({

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./ActivityLog.css";
 
 export type ActivityTone = "default" | "jira" | "claude" | "final" | "confluence";
@@ -33,6 +33,7 @@ export function ActivityLog({
   title = "Live activity",
   emptyHint,
   maxHeight = 260,
+  isLive = true,
 }: {
   entries: ActivityLogEntry[];
   /** Wall-clock ms at which the operation began; used for relative timestamps. */
@@ -42,8 +43,16 @@ export function ActivityLog({
   emptyHint?: string;
   /** Max scroll height in px. */
   maxHeight?: number;
+  /**
+   * When true (default), the elapsed-time meter in the header ticks every
+   * second so a user staring at a hung operation can see real wall-clock
+   * progress. Set to false once the operation has completed (success/error/
+   * cancelled) to freeze the meter at the final elapsed time.
+   */
+  isLive?: boolean;
 }) {
   const listRef = useRef<HTMLOListElement | null>(null);
+  const [tickNow, setTickNow] = useState<number>(() => Date.now());
 
   useEffect(() => {
     const el = listRef.current;
@@ -51,7 +60,17 @@ export function ActivityLog({
     el.scrollTop = el.scrollHeight;
   }, [entries.length]);
 
-  const now = entries[entries.length - 1]?.ts ?? Date.now();
+  // Re-render every second while live so the elapsed-time counter ticks even
+  // when no new events arrive — important for spotting hung operations.
+  useEffect(() => {
+    if (!isLive) return;
+    const id = window.setInterval(() => setTickNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [isLive]);
+
+  const now = isLive
+    ? tickNow
+    : (entries[entries.length - 1]?.ts ?? tickNow);
 
   return (
     <section className="activity-log" aria-label={title}>

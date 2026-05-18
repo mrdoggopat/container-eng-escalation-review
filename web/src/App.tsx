@@ -9,6 +9,7 @@ import {
 import { importFromFile, ImportError } from "./lib/importer";
 import {
   generateReport,
+  GenerationCancelledError,
   type ProgressUpdate,
 } from "./lib/reportGenerator";
 import { type Timeframe } from "./lib/timeframe";
@@ -91,6 +92,17 @@ export default function App() {
   const [compareEntries, setCompareEntries] = useState<CompareEntry[]>([]);
   const [compareImportError, setCompareImportError] = useState<string | null>(null);
   const cancelledRef = useRef(false);
+  // Controls cancellation of the active generation pipeline (Jira/Claude). The
+  // Cancel button on GeneratingView aborts this so in-flight fetches stop
+  // immediately, rather than just hiding the UI while the work continues.
+  const generateAbortRef = useRef<AbortController | null>(null);
+
+  function cancelActiveGeneration() {
+    cancelledRef.current = true;
+    if (generateAbortRef.current && !generateAbortRef.current.signal.aborted) {
+      generateAbortRef.current.abort();
+    }
+  }
 
   useEffect(() => {
     applyTheme(theme);
@@ -153,14 +165,21 @@ export default function App() {
 
   async function runGenerate(timeframe: Timeframe) {
     cancelledRef.current = false;
+    generateAbortRef.current = new AbortController();
+    const signal = generateAbortRef.current.signal;
     setView({ kind: "generating", timeframe, progress: null, error: null });
     try {
-      const result = await generateReport(credentials, timeframe, (update) => {
-        if (cancelledRef.current) return;
-        setView((v) =>
-          v.kind === "generating" ? { ...v, progress: update } : v,
-        );
-      });
+      const result = await generateReport(
+        credentials,
+        timeframe,
+        (update) => {
+          if (cancelledRef.current || signal.aborted) return;
+          setView((v) =>
+            v.kind === "generating" ? { ...v, progress: update } : v,
+          );
+        },
+        signal,
+      );
       if (cancelledRef.current) return;
       setView({
         kind: "report",
@@ -169,7 +188,7 @@ export default function App() {
         warnings: result.warnings,
       });
     } catch (err) {
-      if (cancelledRef.current) return;
+      if (cancelledRef.current || err instanceof GenerationCancelledError) return;
       const message = err instanceof Error ? err.message : String(err);
       setView((v) =>
         v.kind === "generating" ? { ...v, error: message } : v,
@@ -234,6 +253,8 @@ export default function App() {
     const completed = [...seedCompleted];
     for (let i = startIndex; i < queue.length; i++) {
       const tf = queue[i];
+      generateAbortRef.current = new AbortController();
+      const signal = generateAbortRef.current.signal;
       setView({
         kind: "compare-generating-batch",
         queue,
@@ -243,18 +264,25 @@ export default function App() {
         completed,
       });
       try {
-        const result = await generateReport(credentials, tf, (update) => {
-          if (cancelledRef.current) return;
-          setView((v) =>
-            v.kind === "compare-generating-batch"
-              ? { ...v, progress: update }
-              : v,
-          );
-        });
+        const result = await generateReport(
+          credentials,
+          tf,
+          (update) => {
+            if (cancelledRef.current || signal.aborted) return;
+            setView((v) =>
+              v.kind === "compare-generating-batch"
+                ? { ...v, progress: update }
+                : v,
+            );
+          },
+          signal,
+        );
         if (cancelledRef.current) return;
         completed.push({ origin: "live", timeframe: tf, report: result.report });
       } catch (err) {
-        if (cancelledRef.current) return;
+        if (cancelledRef.current || err instanceof GenerationCancelledError) {
+          return;
+        }
         const message = err instanceof Error ? err.message : String(err);
         setView({
           kind: "compare-generating-batch",
@@ -273,6 +301,8 @@ export default function App() {
 
   async function runCompareGenerate(timeframe: Timeframe) {
     cancelledRef.current = false;
+    generateAbortRef.current = new AbortController();
+    const signal = generateAbortRef.current.signal;
     setView({
       kind: "compare-generating-fresh",
       timeframe,
@@ -280,14 +310,19 @@ export default function App() {
       error: null,
     });
     try {
-      const result = await generateReport(credentials, timeframe, (update) => {
-        if (cancelledRef.current) return;
-        setView((v) =>
-          v.kind === "compare-generating-fresh"
-            ? { ...v, progress: update }
-            : v,
-        );
-      });
+      const result = await generateReport(
+        credentials,
+        timeframe,
+        (update) => {
+          if (cancelledRef.current || signal.aborted) return;
+          setView((v) =>
+            v.kind === "compare-generating-fresh"
+              ? { ...v, progress: update }
+              : v,
+          );
+        },
+        signal,
+      );
       if (cancelledRef.current) return;
       const entry: CompareEntry = {
         origin: "live",
@@ -297,7 +332,7 @@ export default function App() {
       setCompareEntries((cur) => [...cur, entry]);
       setView({ kind: "compare-setup" });
     } catch (err) {
-      if (cancelledRef.current) return;
+      if (cancelledRef.current || err instanceof GenerationCancelledError) return;
       const message = err instanceof Error ? err.message : String(err);
       setView((v) =>
         v.kind === "compare-generating-fresh"
@@ -438,7 +473,7 @@ export default function App() {
           progress={view.progress}
           error={view.error}
           onCancel={() => {
-            cancelledRef.current = true;
+            cancelActiveGeneration();
             setView({ kind: "prepare", timeframe: view.timeframe });
           }}
           onRetry={() => void runGenerate(view.timeframe)}
@@ -508,7 +543,7 @@ export default function App() {
           error={view.error}
           showStepProgress={false}
           onCancel={() => {
-            cancelledRef.current = true;
+            cancelActiveGeneration();
             setView({ kind: "compare-setup" });
           }}
           onRetry={() => void runCompareGenerate(view.timeframe)}
@@ -542,7 +577,7 @@ export default function App() {
               .map((t) => t.label),
           }}
           onCancel={() => {
-            cancelledRef.current = true;
+            cancelActiveGeneration();
             // Preserve already-finished reports so the user doesn't lose work.
             if (view.completed.length > 0) {
               setCompareEntries((cur) => [...cur, ...view.completed]);

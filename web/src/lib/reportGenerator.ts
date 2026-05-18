@@ -13,10 +13,15 @@ import {
 import {
   anthropicMessages,
   extractText,
+  GenerationCancelledError,
   jiraIssue,
   jiraSearch,
   type JiraIssue,
 } from "./api";
+
+// Re-export so consumers can `import { GenerationCancelledError } from "./reportGenerator"`
+// without reaching into api.ts. Keeps the public surface consolidated.
+export { GenerationCancelledError } from "./api";
 
 const MAX_ESCALATED_CARDS = 60;
 
@@ -245,6 +250,7 @@ async function analyzeCard(
   creds: Credentials,
   issue: JiraIssue,
   statusFlow: string[],
+  signal?: AbortSignal,
 ): Promise<{
   title: string;
   summary: string;
@@ -297,11 +303,15 @@ async function analyzeCard(
           .join("\n\n"),
   ].join("\n");
 
-  const resp = await anthropicMessages(creds, {
-    system: buildAnalysisSystemPrompt(creds.teeMembers, creds.teamContextUrls),
-    messages: [{ role: "user", content: userMessage }],
-    max_tokens: 1200,
-  });
+  const resp = await anthropicMessages(
+    creds,
+    {
+      system: buildAnalysisSystemPrompt(creds.teeMembers, creds.teamContextUrls),
+      messages: [{ role: "user", content: userMessage }],
+      max_tokens: 1200,
+    },
+    signal,
+  );
 
   const text = extractText(resp).trim();
   const json = parseJsonObject(text);
@@ -355,6 +365,7 @@ async function recheckPreventability(
     solutionCategory: SolutionCategory;
   },
   externalComments: { name: string; text: string }[],
+  signal?: AbortSignal,
 ): Promise<{
   preventable: boolean;
   preventableReason: string;
@@ -420,11 +431,15 @@ Respond with ONLY a valid JSON object — no prose, no markdown fences:
           .join("\n\n"),
   ].join("\n");
 
-  const resp = await anthropicMessages(creds, {
-    system: systemPrompt,
-    messages: [{ role: "user", content: userMessage }],
-    max_tokens: 600,
-  });
+  const resp = await anthropicMessages(
+    creds,
+    {
+      system: systemPrompt,
+      messages: [{ role: "user", content: userMessage }],
+      max_tokens: 600,
+    },
+    signal,
+  );
   const text = extractText(resp).trim();
   const json = parseJsonObject(text);
   const preventable = Boolean(json.preventable);
@@ -451,6 +466,7 @@ Respond with ONLY a valid JSON object — no prose, no markdown fences:
 async function synthesizeImprovements(
   creds: Credentials,
   cards: EscalationCard[],
+  signal?: AbortSignal,
 ): Promise<{ title: string; body: string }[]> {
   if (cards.length === 0) return [];
 
@@ -511,11 +527,15 @@ OUTPUT: respond with ONLY a single valid JSON object — no prose, no markdown f
     cardSummaries,
   ].join("\n");
 
-  const resp = await anthropicMessages(creds, {
-    system: systemPrompt,
-    messages: [{ role: "user", content: userMessage }],
-    max_tokens: 2000,
-  });
+  const resp = await anthropicMessages(
+    creds,
+    {
+      system: systemPrompt,
+      messages: [{ role: "user", content: userMessage }],
+      max_tokens: 2000,
+    },
+    signal,
+  );
   const text = extractText(resp).trim();
   const json = parseJsonObject(text);
   const raw = json.recommendations;
@@ -566,7 +586,11 @@ export async function generateReport(
   creds: Credentials,
   timeframe: Timeframe,
   onProgress: (update: ProgressUpdate) => void,
+  signal?: AbortSignal,
 ): Promise<ReportGenerationResult> {
+  function checkCancel() {
+    if (signal?.aborted) throw new GenerationCancelledError();
+  }
   const warnings: string[] = [];
   const jqlConfig: JqlConfig = {
     projectKey: creds.projectKey,
@@ -583,12 +607,17 @@ export async function generateReport(
   const escalatedKeys: string[] = [];
   let nextPageToken: string | undefined;
   do {
-    const page = await jiraSearch(creds, {
-      jql: buildEscalationJql(timeframe, jqlConfig),
-      fields: ["summary", "status", "created", "resolutiondate"],
-      maxResults: 100,
-      nextPageToken,
-    });
+    checkCancel();
+    const page = await jiraSearch(
+      creds,
+      {
+        jql: buildEscalationJql(timeframe, jqlConfig),
+        fields: ["summary", "status", "created", "resolutiondate"],
+        maxResults: 100,
+        nextPageToken,
+      },
+      signal,
+    );
     for (const issue of page.issues) {
       escalatedKeys.push(issue.key);
       if (escalatedKeys.length >= MAX_ESCALATED_CARDS) break;
@@ -619,29 +648,40 @@ export async function generateReport(
   });
   let totalCardsCreated = escalatedKeys.length;
   try {
-    const totalQuery = await jiraSearch(creds, {
-      jql: buildTotalCardsJql(timeframe, jqlConfig),
-      fields: ["created"],
-      maxResults: 1,
-    });
+    checkCancel();
+    const totalQuery = await jiraSearch(
+      creds,
+      {
+        jql: buildTotalCardsJql(timeframe, jqlConfig),
+        fields: ["created"],
+        maxResults: 1,
+      },
+      signal,
+    );
     if (typeof totalQuery.total === "number") {
       totalCardsCreated = totalQuery.total;
     } else {
       let count = 0;
       let token: string | undefined;
       do {
-        const page = await jiraSearch(creds, {
-          jql: buildTotalCardsJql(timeframe, jqlConfig),
-          fields: ["created"],
-          maxResults: 100,
-          nextPageToken: token,
-        });
+        checkCancel();
+        const page = await jiraSearch(
+          creds,
+          {
+            jql: buildTotalCardsJql(timeframe, jqlConfig),
+            fields: ["created"],
+            maxResults: 100,
+            nextPageToken: token,
+          },
+          signal,
+        );
         count += page.issues.length;
         token = page.isLast ? undefined : page.nextPageToken;
       } while (token);
       totalCardsCreated = count;
     }
   } catch (err) {
+    if (err instanceof GenerationCancelledError) throw err;
     warnings.push(
       `Could not count total ${creds.projectKey} cards (${err instanceof Error ? err.message : String(err)}); escalation rate will be approximate.`,
     );
@@ -664,13 +704,19 @@ export async function generateReport(
       current: i,
       total: escalatedKeys.length,
     });
+    checkCancel();
     // Request all fields so we can pick up custom fields like "Pre-Investigation
     // Notes" / "Investigation Notes". `expand=names` returns a fieldId → display
     // name map so we can locate them without hardcoding custom field IDs.
-    const issue = await jiraIssue(creds, key, {
-      fields: ["*all"],
-      expand: "changelog,names",
-    });
+    const issue = await jiraIssue(
+      creds,
+      key,
+      {
+        fields: ["*all"],
+        expand: "changelog,names",
+      },
+      signal,
+    );
     issues.push(issue);
     const summary = (issue.fields.summary as string | undefined) ?? key;
     onProgress({
@@ -705,10 +751,12 @@ export async function generateReport(
     const statusFlow = extractStatusFlow(issue);
     const createdAt = (issue.fields.created as string | undefined)?.slice(0, 10) ?? "";
     const resolvedAt = firstTerminalDate(issue) ?? createdAt;
+    checkCancel();
     let analysis: Awaited<ReturnType<typeof analyzeCard>>;
     try {
-      analysis = await analyzeCard(creds, issue, statusFlow);
+      analysis = await analyzeCard(creds, issue, statusFlow, signal);
     } catch (err) {
+      if (err instanceof GenerationCancelledError) throw err;
       warnings.push(
         `Analysis failed for ${issue.key} (${err instanceof Error ? err.message : String(err)}); using minimal fallback.`,
       );
@@ -752,6 +800,7 @@ export async function generateReport(
             solutionCategory: analysis.solutionCategory,
           },
           externalComments,
+          signal,
         );
         if (recheck.changed) {
           analysis = {
@@ -776,6 +825,7 @@ export async function generateReport(
           });
         }
       } catch (err) {
+        if (err instanceof GenerationCancelledError) throw err;
         warnings.push(
           `Re-check failed for ${issue.key} (${err instanceof Error ? err.message : String(err)}); keeping first-pass classification.`,
         );
@@ -828,7 +878,8 @@ export async function generateReport(
   });
   let improvements: { title: string; body: string }[] = [];
   try {
-    improvements = await synthesizeImprovements(creds, cards);
+    checkCancel();
+    improvements = await synthesizeImprovements(creds, cards, signal);
     onProgress({
       phase: "assembling",
       message: `Produced ${improvements.length} improvement recommendation${improvements.length === 1 ? "" : "s"}`,
@@ -838,6 +889,7 @@ export async function generateReport(
           : improvements.map((r) => r.title).join(" · "),
     });
   } catch (err) {
+    if (err instanceof GenerationCancelledError) throw err;
     warnings.push(
       `Cross-cutting synthesis failed (${err instanceof Error ? err.message : String(err)}); per-card improvement notes are still available on each card.`,
     );

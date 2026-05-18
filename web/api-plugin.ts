@@ -10,9 +10,10 @@ import type { IncomingMessage, ServerResponse } from "node:http";
  *   POST /api/jira/search             body: { jiraEmail, jiraToken, jiraDomain, jql, fields?, maxResults?, nextPageToken? }
  *   POST /api/jira/issue/:key         body: { jiraEmail, jiraToken, jiraDomain, fields?, expand? }
  *   POST /api/anthropic/messages      body: { anthropicKey, model, system?, messages, max_tokens }
- *   POST /api/confluence/space        body: { jiraEmail, jiraToken, jiraDomain, query }
- *   POST /api/confluence/page-by-title  body: { jiraEmail, jiraToken, jiraDomain, spaceKey, title }
- *   POST /api/confluence/create-page  body: { jiraEmail, jiraToken, jiraDomain, spaceKey, title, parentId?, status?, storageBody }
+ *   POST /api/confluence/space            body: { jiraEmail, jiraToken, jiraDomain, query }
+ *   POST /api/confluence/page-by-title    body: { jiraEmail, jiraToken, jiraDomain, spaceKey, title }
+ *   POST /api/confluence/folder-by-title  body: { jiraEmail, jiraToken, jiraDomain, spaceKey, title }
+ *   POST /api/confluence/create-page      body: { jiraEmail, jiraToken, jiraDomain, spaceKey, title, parentId?, status?, storageBody }
  */
 
 async function readBody(req: IncomingMessage): Promise<string> {
@@ -30,22 +31,79 @@ function send(res: ServerResponse, status: number, body: unknown) {
   res.end(JSON.stringify(body));
 }
 
+/** Default per-call timeout for upstream proxy fetches. */
+const JIRA_TIMEOUT_MS = 30_000;
+const CONFLUENCE_TIMEOUT_MS = 30_000;
+const ANTHROPIC_TIMEOUT_MS = 120_000;
+
+/**
+ * Returns an AbortSignal that fires when either (a) the upstream call exceeds
+ * `timeoutMs`, or (b) the browser disconnects mid-flight (so a user clicking
+ * Cancel in the dialog tears down the upstream fetch too, instead of letting
+ * Node hold the socket open after Atlassian/Anthropic stops responding).
+ */
+function upstreamSignal(req: IncomingMessage, timeoutMs: number): AbortSignal {
+  const controller = new AbortController();
+  const onClientGone = () => {
+    if (!controller.signal.aborted) controller.abort();
+  };
+  req.on("close", onClientGone);
+  req.on("aborted", onClientGone);
+  return AbortSignal.any([controller.signal, AbortSignal.timeout(timeoutMs)]);
+}
+
+function classifyFetchError(err: unknown, timeoutMs: number): {
+  status: number;
+  body: { error: string; detail: string };
+} {
+  if (err instanceof DOMException && err.name === "TimeoutError") {
+    return {
+      status: 504,
+      body: {
+        error: "upstream_timeout",
+        detail: `Upstream did not respond within ${timeoutMs / 1000}s.`,
+      },
+    };
+  }
+  if (err instanceof DOMException && err.name === "AbortError") {
+    return {
+      status: 499,
+      body: {
+        error: "client_disconnected",
+        detail: "Browser disconnected before upstream responded.",
+      },
+    };
+  }
+  return {
+    status: 502,
+    body: {
+      error: "upstream_fetch_failed",
+      detail: err instanceof Error ? err.message : String(err),
+    },
+  };
+}
+
 async function forwardJson(
+  req: IncomingMessage,
   res: ServerResponse,
   url: string,
   init: RequestInit,
+  timeoutMs: number,
 ): Promise<void> {
   try {
-    const upstream = await fetch(url, init);
+    const upstream = await fetch(url, {
+      ...init,
+      signal: upstreamSignal(req, timeoutMs),
+    });
     const text = await upstream.text();
+    if (res.writableEnded) return;
     res.statusCode = upstream.status;
     res.setHeader("Content-Type", "application/json");
     res.end(text || "{}");
   } catch (err) {
-    send(res, 502, {
-      error: "upstream_fetch_failed",
-      detail: err instanceof Error ? err.message : String(err),
-    });
+    if (res.writableEnded) return;
+    const { status, body } = classifyFetchError(err, timeoutMs);
+    send(res, status, body);
   }
 }
 
@@ -60,20 +118,28 @@ async function handleJiraSearch(req: IncomingMessage, res: ServerResponse) {
   if (!jiraEmail || !jiraToken || !jiraDomain || !jql) {
     return send(res, 400, { error: "missing_jira_credentials_or_jql" });
   }
-  await forwardJson(res, `https://${jiraDomain}/rest/api/3/search/jql`, {
-    method: "POST",
-    headers: {
-      Authorization: basicAuth(jiraEmail, jiraToken),
-      Accept: "application/json",
-      "Content-Type": "application/json",
+  await forwardJson(
+    req,
+    res,
+    `https://${jiraDomain}/rest/api/3/search/jql`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: basicAuth(jiraEmail, jiraToken),
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        jql,
+        fields:
+          fields ??
+          ["summary", "status", "assignee", "reporter", "created", "resolutiondate"],
+        maxResults: maxResults ?? 100,
+        ...(nextPageToken ? { nextPageToken } : {}),
+      }),
     },
-    body: JSON.stringify({
-      jql,
-      fields: fields ?? ["summary", "status", "assignee", "reporter", "created", "resolutiondate"],
-      maxResults: maxResults ?? 100,
-      ...(nextPageToken ? { nextPageToken } : {}),
-    }),
-  });
+    JIRA_TIMEOUT_MS,
+  );
 }
 
 async function handleJiraIssue(
@@ -90,6 +156,7 @@ async function handleJiraIssue(
   if (fields) params.set("fields", Array.isArray(fields) ? fields.join(",") : fields);
   if (expand) params.set("expand", expand);
   await forwardJson(
+    req,
     res,
     `https://${jiraDomain}/rest/api/3/issue/${encodeURIComponent(key)}?${params.toString()}`,
     {
@@ -99,6 +166,7 @@ async function handleJiraIssue(
         Accept: "application/json",
       },
     },
+    JIRA_TIMEOUT_MS,
   );
 }
 
@@ -146,6 +214,7 @@ async function handleConfluenceSpace(req: IncomingMessage, res: ServerResponse) 
           Authorization: basicAuth(auth.jiraEmail, auth.jiraToken),
           Accept: "application/json",
         },
+        signal: upstreamSignal(req, CONFLUENCE_TIMEOUT_MS),
       });
       if (r.ok) {
         const data = (await r.json()) as {
@@ -158,8 +227,17 @@ async function handleConfluenceSpace(req: IncomingMessage, res: ServerResponse) 
           space: { key: data.key, id: String(data.id), name: data.name },
         });
       }
-    } catch {
-      // Fall through to name lookup.
+    } catch (err) {
+      // Fall through to name lookup unless we ran out of time or the client
+      // disconnected — in those cases there's no point retrying upstream.
+      if (
+        err instanceof DOMException &&
+        (err.name === "TimeoutError" || err.name === "AbortError")
+      ) {
+        if (res.writableEnded) return;
+        const { status, body } = classifyFetchError(err, CONFLUENCE_TIMEOUT_MS);
+        return send(res, status, body);
+      }
     }
   }
 
@@ -172,6 +250,7 @@ async function handleConfluenceSpace(req: IncomingMessage, res: ServerResponse) 
         Authorization: basicAuth(auth.jiraEmail, auth.jiraToken),
         Accept: "application/json",
       },
+      signal: upstreamSignal(req, CONFLUENCE_TIMEOUT_MS),
     });
     if (!r.ok) {
       const text = await r.text();
@@ -202,10 +281,9 @@ async function handleConfluenceSpace(req: IncomingMessage, res: ServerResponse) 
       space: { key: hit.key, id: String(hit.id), name: hit.name },
     });
   } catch (err) {
-    return send(res, 502, {
-      error: "upstream_fetch_failed",
-      detail: err instanceof Error ? err.message : String(err),
-    });
+    if (res.writableEnded) return;
+    const { status, body } = classifyFetchError(err, CONFLUENCE_TIMEOUT_MS);
+    return send(res, status, body);
   }
 }
 
@@ -236,6 +314,7 @@ async function handleConfluencePageByTitle(
           Authorization: basicAuth(auth.jiraEmail, auth.jiraToken),
           Accept: "application/json",
         },
+        signal: upstreamSignal(req, CONFLUENCE_TIMEOUT_MS),
       },
     );
     if (!r.ok) {
@@ -252,10 +331,74 @@ async function handleConfluencePageByTitle(
     if (!hit) return send(res, 200, { page: null });
     return send(res, 200, { page: { id: hit.id, title: hit.title } });
   } catch (err) {
-    return send(res, 502, {
-      error: "upstream_fetch_failed",
-      detail: err instanceof Error ? err.message : String(err),
+    if (res.writableEnded) return;
+    const { status, body } = classifyFetchError(err, CONFLUENCE_TIMEOUT_MS);
+    return send(res, status, body);
+  }
+}
+
+/**
+ * Look up a Confluence folder by title within a given space. Folders are a
+ * separate content type from pages in Confluence Cloud, and the v2 REST API
+ * doesn't expose a list-by-space endpoint for them. We instead use the v1
+ * CQL search endpoint, which explicitly supports `type=folder`. CQL also
+ * matches case-insensitively on title, so the lookup is robust to casing.
+ *
+ * Folders are valid `ancestors` when creating a page, so the resulting id can
+ * be passed straight to `createPage`.
+ */
+async function handleConfluenceFolderByTitle(
+  req: IncomingMessage,
+  res: ServerResponse,
+) {
+  const body = JSON.parse((await readBody(req)) || "{}");
+  const auth = requireAtlassian(body);
+  if (!auth) return send(res, 400, { error: "missing_jira_credentials" });
+  const spaceKey = String(body.spaceKey ?? "").trim();
+  const title = String(body.title ?? "").trim();
+  if (!spaceKey || !title) {
+    return send(res, 400, {
+      error: "missing_space_key_or_title",
+      detail: "spaceKey and title are required.",
     });
+  }
+  // CQL string literals use double quotes; escape any quotes in the title.
+  const escapedTitle = title.replace(/"/g, '\\"');
+  const cql = `space = "${spaceKey}" AND type = "folder" AND title = "${escapedTitle}"`;
+  const params = new URLSearchParams({ cql, limit: "5" });
+  try {
+    const r = await fetch(
+      `https://${auth.jiraDomain}/wiki/rest/api/content/search?${params.toString()}`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: basicAuth(auth.jiraEmail, auth.jiraToken),
+          Accept: "application/json",
+        },
+        signal: upstreamSignal(req, CONFLUENCE_TIMEOUT_MS),
+      },
+    );
+    if (!r.ok) {
+      const text = await r.text();
+      return send(res, r.status, {
+        error: "confluence_folder_lookup_failed",
+        detail: text,
+      });
+    }
+    const data = (await r.json()) as {
+      results: Array<{ id: string; title: string; type?: string }>;
+    };
+    // Prefer an exact-case match if multiple folders share the title (rare).
+    const exact = data.results.find((f) => f.title === title);
+    const hit = exact ?? data.results[0];
+    if (!hit) return send(res, 200, { folder: null });
+    return send(res, 200, {
+      folder: { id: String(hit.id), title: hit.title },
+    });
+  } catch (err) {
+    if (res.writableEnded) return;
+    const { status, body } = classifyFetchError(err, CONFLUENCE_TIMEOUT_MS);
+    return send(res, status, body);
   }
 }
 
@@ -300,16 +443,17 @@ async function handleConfluenceCreatePage(
         "Content-Type": "application/json",
       },
       body: JSON.stringify(payload),
+      signal: upstreamSignal(req, CONFLUENCE_TIMEOUT_MS),
     });
     const text = await r.text();
+    if (res.writableEnded) return;
     res.statusCode = r.status;
     res.setHeader("Content-Type", "application/json");
     res.end(text || "{}");
   } catch (err) {
-    send(res, 502, {
-      error: "upstream_fetch_failed",
-      detail: err instanceof Error ? err.message : String(err),
-    });
+    if (res.writableEnded) return;
+    const { status, body } = classifyFetchError(err, CONFLUENCE_TIMEOUT_MS);
+    send(res, status, body);
   }
 }
 
@@ -319,16 +463,22 @@ async function handleAnthropic(req: IncomingMessage, res: ServerResponse) {
   if (!anthropicKey) {
     return send(res, 400, { error: "missing_anthropic_key" });
   }
-  await forwardJson(res, "https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": anthropicKey,
-      "anthropic-version": "2023-06-01",
-      "Content-Type": "application/json",
-      Accept: "application/json",
+  await forwardJson(
+    req,
+    res,
+    "https://api.anthropic.com/v1/messages",
+    {
+      method: "POST",
+      headers: {
+        "x-api-key": anthropicKey,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(payload),
     },
-    body: JSON.stringify(payload),
-  });
+    ANTHROPIC_TIMEOUT_MS,
+  );
 }
 
 export function apiPlugin(): Plugin {
@@ -353,6 +503,9 @@ export function apiPlugin(): Plugin {
           }
           if (req.method === "POST" && url === "/api/confluence/page-by-title") {
             return await handleConfluencePageByTitle(req, res);
+          }
+          if (req.method === "POST" && url === "/api/confluence/folder-by-title") {
+            return await handleConfluenceFolderByTitle(req, res);
           }
           if (req.method === "POST" && url === "/api/confluence/create-page") {
             return await handleConfluenceCreatePage(req, res);

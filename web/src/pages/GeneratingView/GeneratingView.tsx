@@ -231,6 +231,7 @@ export function GeneratingView({
           entries={activity}
           startedAt={startedAtRef.current}
           title="Live activity"
+          isLive={!error}
         />
       ) : null}
 

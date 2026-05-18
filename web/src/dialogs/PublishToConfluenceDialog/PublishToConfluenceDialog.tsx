@@ -90,19 +90,29 @@ export function PublishToConfluenceDialog({
   }, []);
 
   function handleCancel() {
+    // Hard escape hatch: drop the user back to the form RIGHT NOW. The
+    // in-flight fetch is aborted in the background — its catch block will
+    // run later but `cancelledRef` is already set, so the result is ignored.
+    // This is the only way to be sure the user can never get stuck on a
+    // hung spinner, regardless of how the underlying fetch / proxy behaves.
+    cancelledRef.current = true;
     if (abortRef.current && !abortRef.current.signal.aborted) {
       abortRef.current.abort();
     }
+    pushActivity(
+      "Cancel requested",
+      "Aborted by user — returning to form. Any in-flight Confluence request is being cancelled in the background.",
+    );
+    setPhase({ kind: "form" });
   }
 
   function handleClose() {
-    // X / backdrop / explicit close. If a publish is in flight, abort it first
-    // so the underlying fetch doesn't keep running in the background.
+    // X / backdrop / Esc. If a publish is in flight, abort it AND dismiss the
+    // whole modal — the catch in handleSubmit will see cancelledRef and bail
+    // silently, so we don't have to wait for it to settle before tearing down.
     if (phase.kind === "publishing") {
-      handleCancel();
-      // Don't dismiss yet — let the catch-block in handleSubmit flip the phase
-      // to "form" or "error". The user can then dismiss normally.
-      return;
+      cancelledRef.current = true;
+      abortRef.current?.abort();
     }
     onClose();
   }
@@ -118,6 +128,7 @@ export function PublishToConfluenceDialog({
       storageBody,
     };
     if (!opts.title || !opts.spaceQuery) return;
+    cancelledRef.current = false;
     setActivity([]);
     nextIdRef.current = 0;
     startedAtRef.current = Date.now();
@@ -306,15 +317,15 @@ export function PublishToConfluenceDialog({
               title="Confluence activity"
               emptyHint="Waiting for first response from Confluence…"
               maxHeight={200}
+              isLive
             />
             <footer className="publish-actions">
               <button
                 type="button"
                 className="ghost-button"
                 onClick={handleCancel}
-                disabled={!!abortRef.current?.signal.aborted}
               >
-                {abortRef.current?.signal.aborted ? "Cancelling…" : "Cancel"}
+                Cancel
               </button>
             </footer>
           </div>
@@ -335,6 +346,7 @@ export function PublishToConfluenceDialog({
                 startedAt={startedAtRef.current}
                 title="Publish trace"
                 maxHeight={180}
+                isLive={false}
               />
             ) : null}
             <footer className="publish-actions">
@@ -365,6 +377,7 @@ export function PublishToConfluenceDialog({
                 startedAt={startedAtRef.current}
                 title="Publish trace (failed)"
                 maxHeight={180}
+                isLive={false}
               />
             ) : null}
             <footer className="publish-actions">
