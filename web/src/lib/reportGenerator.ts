@@ -70,10 +70,39 @@ function adfToPlainText(node: unknown): string {
   return "";
 }
 
-function extractStatusFlow(issue: JiraIssue): string[] {
+// ---------------------------------------------------------------------------
+// Jira field accessors
+// ---------------------------------------------------------------------------
+// Jira's REST response is loosely typed (`fields: Record<string, unknown>`),
+// so we narrow the common shapes in one place rather than repeating the casts
+// at every callsite.
+
+/** `fields[key].displayName` (e.g. `reporter`, `assignee`) or a fallback. */
+function getDisplayName(
+  fields: Record<string, unknown>,
+  key: string,
+  fallback = "—",
+): string {
+  const value = fields[key] as { displayName?: string } | undefined;
+  return value?.displayName ?? fallback;
+}
+
+/** The card's summary string, or the issue key if no summary is present. */
+function getIssueSummary(issue: JiraIssue): string {
+  return (issue.fields.summary as string | undefined) ?? issue.key;
+}
+
+type ChangelogHistory = NonNullable<JiraIssue["changelog"]>["histories"][number];
+
+/** Returns the issue's changelog histories sorted chronologically (oldest first). */
+function sortedHistories(issue: JiraIssue): ChangelogHistory[] {
   const histories = issue.changelog?.histories ?? [];
+  return [...histories].sort((a, b) => a.created.localeCompare(b.created));
+}
+
+function extractStatusFlow(issue: JiraIssue): string[] {
   const transitions: string[] = [];
-  for (const h of [...histories].sort((a, b) => a.created.localeCompare(b.created))) {
+  for (const h of sortedHistories(issue)) {
     for (const item of h.items) {
       if (item.field === "status" && item.toString) {
         if (transitions.length === 0 && item.fromString) {
@@ -92,8 +121,7 @@ function extractStatusFlow(issue: JiraIssue): string[] {
 }
 
 function firstTerminalDate(issue: JiraIssue): string | null {
-  const histories = issue.changelog?.histories ?? [];
-  for (const h of [...histories].sort((a, b) => a.created.localeCompare(b.created))) {
+  for (const h of sortedHistories(issue)) {
     for (const item of h.items) {
       if (
         item.field === "status" &&
@@ -135,7 +163,7 @@ function extractNamedFieldContents(
     if (typeof displayName !== "string") continue;
     const lower = displayName.toLowerCase();
     if (!lowerPatterns.some((p) => lower.includes(p))) continue;
-    const value = (issue.fields as Record<string, unknown>)[fieldId];
+    const value = issue.fields[fieldId];
     const text = adfToPlainText(value).trim();
     if (!text) continue;
     out.push({ name: displayName, text });
@@ -143,17 +171,18 @@ function extractNamedFieldContents(
   return out;
 }
 
+type ExternalComment = { name: string; text: string };
+
 function commentersOutsideTeamAndReporter(
   issue: JiraIssue,
   teamMembers: Set<string>,
-): { name: string; text: string }[] {
+): ExternalComment[] {
   const comments =
     ((issue.fields.comment as { comments?: Array<unknown> } | undefined)?.comments as
       | Array<{ author?: { displayName?: string }; body?: unknown }>
       | undefined) ?? [];
-  const reporter =
-    (issue.fields.reporter as { displayName?: string } | undefined)?.displayName ?? "";
-  const out: { name: string; text: string }[] = [];
+  const reporter = getDisplayName(issue.fields, "reporter", "");
+  const out: ExternalComment[] = [];
   for (const c of comments) {
     const name = c.author?.displayName ?? "Unknown";
     if (teamMembers.has(name)) continue;
@@ -163,6 +192,21 @@ function commentersOutsideTeamAndReporter(
     out.push({ name, text });
   }
   return out;
+}
+
+/**
+ * Format a list of external comments as a prompt-ready block. Caps the number
+ * of comments at 30 and the text per comment at 1500 chars to keep prompts
+ * within a predictable token budget.
+ */
+function renderExternalComments(comments: ExternalComment[]): string {
+  if (comments.length === 0) return "(none)";
+  return comments
+    .slice(0, 30)
+    .map(
+      (c, i) => `--- comment ${i + 1} by ${c.name} ---\n${c.text.slice(0, 1500)}`,
+    )
+    .join("\n\n");
 }
 
 function daysBetween(a: string, b: string): number {
@@ -261,13 +305,11 @@ async function analyzeCard(
   nonTeeInvolvement: string;
   improvement: string;
 }> {
-  const fields = issue.fields as Record<string, unknown>;
-  const summary = (fields.summary as string | undefined) ?? issue.key;
+  const fields = issue.fields;
+  const summary = getIssueSummary(issue);
   const description = adfToPlainText(fields.description);
-  const reporter =
-    (fields.reporter as { displayName?: string } | undefined)?.displayName ?? "—";
-  const assignee =
-    (fields.assignee as { displayName?: string } | undefined)?.displayName ?? "—";
+  const reporter = getDisplayName(fields, "reporter");
+  const assignee = getDisplayName(fields, "assignee");
   const teamSet = new Set(creds.teeMembers);
   const externalComments = commentersOutsideTeamAndReporter(issue, teamSet);
   const investigationNotes = extractNamedFieldContents(
@@ -295,12 +337,7 @@ async function analyzeCard(
         ].join("\n"),
     "",
     "Comments from participants outside the internal team and not the Reporter:",
-    externalComments.length === 0
-      ? "(none)"
-      : externalComments
-          .slice(0, 30)
-          .map((c, i) => `--- comment ${i + 1} by ${c.name} ---\n${c.text.slice(0, 1500)}`)
-          .join("\n\n"),
+    renderExternalComments(externalComments),
   ].join("\n");
 
   const resp = await anthropicMessages(
@@ -364,7 +401,7 @@ async function recheckPreventability(
     preventableReason: string;
     solutionCategory: SolutionCategory;
   },
-  externalComments: { name: string; text: string }[],
+  externalComments: ExternalComment[],
   signal?: AbortSignal,
 ): Promise<{
   preventable: boolean;
@@ -372,10 +409,8 @@ async function recheckPreventability(
   changed: boolean;
   changeReason: string;
 }> {
-  const summary = (issue.fields.summary as string | undefined) ?? issue.key;
-  const reporter =
-    (issue.fields.reporter as { displayName?: string } | undefined)
-      ?.displayName ?? "—";
+  const summary = getIssueSummary(issue);
+  const reporter = getDisplayName(issue.fields, "reporter");
   const teamList =
     creds.teeMembers.length === 0
       ? "(no internal team configured)"
@@ -420,15 +455,7 @@ Respond with ONLY a valid JSON object — no prose, no markdown fences:
     `First-pass reason: ${firstPass.preventableReason}`,
     "",
     `External comments (NOT on the internal team, NOT the Reporter) — ${externalComments.length} total:`,
-    externalComments.length === 0
-      ? "(none)"
-      : externalComments
-          .slice(0, 30)
-          .map(
-            (c, i) =>
-              `--- comment ${i + 1} by ${c.name} ---\n${c.text.slice(0, 1500)}`,
-          )
-          .join("\n\n"),
+    renderExternalComments(externalComments),
   ].join("\n");
 
   const resp = await anthropicMessages(
@@ -718,11 +745,10 @@ export async function generateReport(
       signal,
     );
     issues.push(issue);
-    const summary = (issue.fields.summary as string | undefined) ?? key;
     onProgress({
       phase: "fetching-changelogs",
       message: `Fetched ${key}`,
-      detail: summary,
+      detail: getIssueSummary(issue),
       current: i + 1,
       total: escalatedKeys.length,
     });
@@ -740,11 +766,10 @@ export async function generateReport(
   const cards: EscalationCard[] = [];
   for (let i = 0; i < issues.length; i++) {
     const issue = issues[i];
-    const summary = (issue.fields.summary as string | undefined) ?? issue.key;
     onProgress({
       phase: "analyzing",
       message: `Analyzing ${issue.key}`,
-      detail: summary,
+      detail: getIssueSummary(issue),
       current: i,
       total: issues.length,
     });
@@ -760,10 +785,13 @@ export async function generateReport(
       warnings.push(
         `Analysis failed for ${issue.key} (${err instanceof Error ? err.message : String(err)}); using minimal fallback.`,
       );
+      // Use the Jira summary if present (defaulting to the issue key for title,
+      // but to a placeholder for the summary body so the UI clearly signals the
+      // analysis failure rather than echoing the title twice).
+      const rawSummary = issue.fields.summary as string | undefined;
       analysis = {
-        title: (issue.fields.summary as string | undefined) ?? issue.key,
-        summary:
-          (issue.fields.summary as string | undefined) ?? "Analysis unavailable.",
+        title: rawSummary ?? issue.key,
+        summary: rawSummary ?? "Analysis unavailable.",
         escalationReason: "Analysis unavailable.",
         preventable: false,
         preventableReason: "Could not be analyzed automatically.",
@@ -853,12 +881,8 @@ export async function generateReport(
       createdAt,
       resolvedAt,
       durationDays: daysBetween(createdAt, resolvedAt),
-      assignee:
-        (issue.fields.assignee as { displayName?: string } | undefined)?.displayName ??
-        "—",
-      reporter:
-        (issue.fields.reporter as { displayName?: string } | undefined)?.displayName ??
-        "—",
+      assignee: getDisplayName(issue.fields, "assignee"),
+      reporter: getDisplayName(issue.fields, "reporter"),
       statusFlow: statusFlow.join(" → "),
       preventable: analysis.preventable,
       preventableReason: analysis.preventableReason,
